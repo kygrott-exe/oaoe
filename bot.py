@@ -19,7 +19,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 # ─── ADMIN COMMANDS ──────────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -37,15 +36,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• `/stats` — view payment stats\n\n"
             "_Example:_\n"
             "`/createlink 50 VIP Access`\n"
-            "`/setmessage ABC123 Thanks! Here's your invite: t.me/+xxxx`"
+            "`/setmessage ABC123 Thanks\\! Here's your invite: t\\.me/\\+xxxx`\n\n"
+            "💡 *Tip:* You can include any link in `/setmessage` — it will be sent as a clickable link to buyers\\."
         )
     else:
         text = (
             f"⭐ *Stars Payment Bot*\n\n"
-            f"Hi {user.first_name}! Use the payment link shared by the admin to pay."
+            f"Hi {user.first_name}\\! Use the payment link shared by the admin to pay\\."
         )
 
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_text(text, parse_mode="MarkdownV2")
 
 
 async def create_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -97,14 +97,14 @@ async def create_link(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⭐ Stars: {amount}\n"
         f"🏷 Label: {label}\n\n"
         f"🔗 Share this link:\n{invoice_url}\n\n"
-        f"Set a custom reply message:\n"
-        f"/setmessage {link_id} Your message here",
+        f"Set a custom reply message with a link:\n"
+        f"/setmessage {link_id} Thanks! Here's your access: https://t.me/yourchannel",
         parse_mode=None
     )
 
 
 async def set_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: /setmessage <link_id> <custom message>"""
+    """Admin: /setmessage <link_id> <custom message (can include links)>"""
     user = update.effective_user
     if user.id not in ADMIN_IDS:
         return await update.message.reply_text("❌ Admin only.")
@@ -112,7 +112,10 @@ async def set_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if len(args) < 2:
         return await update.message.reply_text(
-            "Usage: `/setmessage <link_id> <message>`",
+            "Usage: `/setmessage <link_id> <message>`\n\n"
+            "You can include URLs directly in the message — they'll be clickable for buyers.\n\n"
+            "Example:\n"
+            "`/setmessage ABC123 Thanks for your purchase! Here's your link: https://t.me/+invite`",
             parse_mode="Markdown"
         )
 
@@ -120,9 +123,12 @@ async def set_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = " ".join(args[1:])
 
     success = db.set_custom_message(link_id=link_id, admin_id=user.id, message=message)
+
     if success:
         await update.message.reply_text(
-            f"✅ Custom message set for link `{link_id}`:\n\n{message}",
+            f"✅ Custom message set for link `{link_id}`\n\n"
+            f"📩 *Preview of what buyers will see:*\n\n"
+            f"{message}",
             parse_mode="Markdown"
         )
     else:
@@ -142,15 +148,15 @@ async def list_links(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "📋 *Your Payment Links*\n\n"
     for link in links:
         msg_preview = (
-            (link["message"][:35] + "...") if link["message"] and len(link["message"]) > 35
-            else (link["message"] or "_(not set)_")
+            (link["message"][:50] + "...") if link["message"] and len(link["message"]) > 50
+            else (link["message"] or "_(not set — use /setmessage)_")
         )
         url = link.get("invoice_url") or "_(generating...)_"
         text += (
             f"🆔 `{link['id']}` — ⭐ {link['amount']} — {link['label']}\n"
-            f"   🔗 {url}\n"
-            f"   💬 Reply: {msg_preview}\n"
-            f"   💰 Paid: {link['payment_count']} time(s)\n\n"
+            f"🔗 {url}\n"
+            f"💬 Reply: {msg_preview}\n"
+            f"💰 Paid: {link['payment_count']} time(s)\n\n"
         )
 
     await update.message.reply_text(text, parse_mode="Markdown")
@@ -218,15 +224,27 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
         stars=payment.total_amount,
     )
 
-    # Send custom message to buyer
+    # Fetch the link details
     link = db.get_link(link_id)
     custom_msg = link["message"] if link and link["message"] else None
 
-    await update.message.reply_text(
-        custom_msg if custom_msg else f"✅ Payment received! Thank you, {buyer.first_name}! ⭐"
-    )
+    # Send custom message to buyer — with link support
+    if custom_msg:
+        # Try Markdown first (renders URLs and bold/italic nicely)
+        try:
+            await update.message.reply_text(custom_msg, parse_mode="Markdown")
+        except Exception:
+            # If Markdown fails (e.g. malformed), fall back to plain text
+            # URLs will still be auto-linked by Telegram in plain text
+            await update.message.reply_text(custom_msg)
+    else:
+        await update.message.reply_text(
+            f"✅ Payment received! Thank you, {buyer.first_name}! ⭐"
+        )
 
     # Notify admin
+    sent_msg_preview = (custom_msg[:60] + "...") if custom_msg and len(custom_msg) > 60 else (custom_msg or "_(default thank you message)_")
+
     try:
         await context.bot.send_message(
             chat_id=admin_id,
@@ -236,7 +254,8 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 + (f" (@{buyer.username})" if buyer.username else "") + "\n"
                 f"🆔 Link: `{link_id}`"
                 + (f" — {link['label']}" if link else "") + "\n"
-                f"⭐ Stars: `{payment.total_amount}`"
+                f"⭐ Stars: `{payment.total_amount}`\n"
+                f"📩 Message sent: {sent_msg_preview}"
             ),
             parse_mode="Markdown"
         )
@@ -255,7 +274,6 @@ def main():
     app.add_handler(CommandHandler("links", list_links))
     app.add_handler(CommandHandler("deletelink", delete_link))
     app.add_handler(CommandHandler("stats", stats))
-
     app.add_handler(PreCheckoutQueryHandler(pre_checkout))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
 
