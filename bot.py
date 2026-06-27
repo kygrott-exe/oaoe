@@ -125,12 +125,14 @@ async def set_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     success = db.set_custom_message(link_id=link_id, admin_id=user.id, message=message)
 
     if success:
+        # Send confirmation in Markdown, then the preview in plain text separately
+        # to avoid Markdown parse errors from user-supplied content (e.g. URLs with special chars)
         await update.message.reply_text(
             f"✅ Custom message set for link `{link_id}`\n\n"
-            f"📩 *Preview of what buyers will see:*\n\n"
-            f"{message}",
+            f"📩 Preview of what buyers will see:",
             parse_mode="Markdown"
         )
+        await update.message.reply_text(message)  # plain text — URLs still auto-link
     else:
         await update.message.reply_text("❌ Link not found or not yours.")
 
